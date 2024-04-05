@@ -102,7 +102,24 @@ export function clearAnnotations() {
  * ellipsis (...).
  *
  * This will return a list of annotation blocks containing the line numbers
- * and the description.
+ * and the description that should be listed out to the viewer. Only items
+ * returned here will be listed. However, other content may be highlighted
+ * that does not end up in that list.
+ *
+ * This table suggests the fallbacks we have in place for responding to the
+ * provided 'evidence' column. Ideally, the evidence column can be parsed into
+ * items with a line number, code snippet, and a message (this first row of
+ * this table.) Then, it may be missing any one of those items and has to be
+ * gracefully handled. We should still strive to fix upstream the prompts such
+ * that they provide the ideal form.
+ *
+ * line number? | has code? | message? | annotated by | line number via
+ * ---------------------------------------------------------------------
+ * yes          | yes       | yes      | evidence     | code snippet
+ * yes          | no        | yes      | evidence     | AI line number
+ * yes          | yes       | no       | observations | code snippet
+ * yes          | no        | no       | observations | AI line number
+ * no           | --        | --       | none         | none
  *
  * @param {string} evidence - A text block described above.
  * @param {string} observations - The text block for the overall observations, if needed.
@@ -110,6 +127,12 @@ export function clearAnnotations() {
  */
 export function annotateLines(evidence, observations) {
   let ret = [];
+
+  // When we fail to find specific instances of evidence, we use the
+  // 'observations' column to fill out the evidence section. This fall back
+  // is not our ideal since it does not include line numbers or landmarks in
+  // the code to follow.
+  let shouldIncludeObservationsColumn = false;
 
   // Go through the AI evidence
   // For every reference the AI gave us, we will find it in the code.
@@ -182,12 +205,16 @@ export function annotateLines(evidence, observations) {
         for (let i = position.firstLine; i <= position.lastLine; i++) {
           EditorAnnotator.highlightLine(i, ai_rubric_cyan);
         }
-        ret.push({
-          firstLine: position.firstLine,
-          lastLine: position.lastLine,
-          message: message,
-          observations: observations,
-        });
+
+        if (message === observations) {
+          shouldIncludeObservationsColumn = true;
+        } else {
+          ret.push({
+            firstLine: position.firstLine,
+            lastLine: position.lastLine,
+            message: message,
+          });
+        }
       }
     }
 
@@ -205,19 +232,38 @@ export function annotateLines(evidence, observations) {
       for (let i = lineNumber; i <= lastLineNumber; i++) {
         EditorAnnotator.highlightLine(i, ai_rubric_cyan);
       }
-      ret.push({
-        firstLine: lineNumber,
-        lastLine: lastLineNumber,
-        message: message,
-        observations: observations,
-      });
+
+      // If we are forcing these lines to have the bulk annotation of
+      // the observations column, we do not append it to the list. This way,
+      // it does not get listed out.
+      if (message === observations) {
+        shouldIncludeObservationsColumn = true;
+      } else {
+        ret.push({
+          firstLine: lineNumber,
+          lastLine: lastLineNumber,
+          message: message,
+        });
+      }
     }
+  }
+
+  // Somewhere, we annotated with the obserations column, or we have no other
+  // sources of evidence. We want to list out the observations column in our
+  // rendered list. So, here we parse out the observations column.
+  if (shouldIncludeObservationsColumn) {
+    observations.split('. ').forEach(observation => {
+      ret.push({
+        message: observation,
+      });
+    });
   }
 
   return ret;
 }
 
 export default function LearningGoals({
+  productTour,
   open,
   learningGoals,
   teacherHasEnabledAi,
@@ -346,7 +392,7 @@ export default function LearningGoals({
   };
 
   useEffect(() => {
-    if (studentLevelInfo && learningGoals) {
+    if (studentLevelInfo && learningGoals && !productTour) {
       // Set our current idea of the feedback immediately
       setDisplayFeedback(teacherFeedbacks.current[currentLearningGoal]);
       setLoaded(teacherFeedbacksLoaded.current[currentLearningGoal]);
@@ -396,11 +442,11 @@ export default function LearningGoals({
             .catch(error => console.error(error));
         });
     }
-  }, [studentLevelInfo, learningGoals, currentLearningGoal, open]);
+  }, [studentLevelInfo, learningGoals, currentLearningGoal, open, productTour]);
 
-  useEffect(() =>
-    document.addEventListener('keydown', handleKeyDown, {once: true})
-  );
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown, {once: true});
+  });
 
   // Callback to retrieve understanding data from EvidenceLevels
   const radioButtonCallback = radioButtonData => {
@@ -471,44 +517,54 @@ export default function LearningGoals({
   const aiEvidence = useMemo(() => {
     // Annotate the lines based on the AI observation
     clearAnnotations();
-    if (!!aiEvalInfo?.evidence) {
+    if (!!aiEvalInfo?.evidence && !productTour) {
       return annotateLines(aiEvalInfo.evidence, aiEvalInfo.observations);
+    } else if (productTour) {
+      return [
+        {
+          firstLine: 12,
+          lastLine: 13,
+          message: 'A sprite is defined here.',
+        },
+      ];
     }
     return [];
-  }, [aiEvalInfo]);
+  }, [aiEvalInfo, productTour]);
 
   const onCarouselPress = buttonValue => {
-    let currentIndex = currentLearningGoal;
-    currentIndex += buttonValue;
-    if (currentIndex < 0) {
-      currentIndex = learningGoals.length;
-    } else if (currentIndex > learningGoals.length) {
-      currentIndex = 0;
-    }
-    currentLearningGoalRef.current = currentIndex;
-    setCurrentLearningGoal(currentIndex);
+    if (!productTour) {
+      let currentIndex = currentLearningGoal;
+      currentIndex += buttonValue;
+      if (currentIndex < 0) {
+        currentIndex = learningGoals.length;
+      } else if (currentIndex > learningGoals.length) {
+        currentIndex = 0;
+      }
+      currentLearningGoalRef.current = currentIndex;
+      setCurrentLearningGoal(currentIndex);
 
-    // Clear feedback (without sending it)
-    setAiFeedback(-1);
+      // Clear feedback (without sending it)
+      setAiFeedback(-1);
 
-    // Annotate the lines based on the AI observation
-    clearAnnotations();
-    if (currentIndex !== learningGoals.length) {
-      if (!isStudent) {
-        const eventName = EVENTS.TA_RUBRIC_LEARNING_GOAL_SELECTED;
-        analyticsReporter.sendEvent(eventName, {
-          ...(reportingData || {}),
-          learningGoalKey: learningGoals[currentIndex].key,
-          learningGoal: learningGoals[currentIndex].learningGoal,
-        });
+      // Annotate the lines based on the AI observation
+      clearAnnotations();
+      if (currentIndex !== learningGoals.length) {
+        if (!isStudent) {
+          const eventName = EVENTS.TA_RUBRIC_LEARNING_GOAL_SELECTED;
+          analyticsReporter.sendEvent(eventName, {
+            ...(reportingData || {}),
+            learningGoalKey: learningGoals[currentIndex].key,
+            learningGoal: learningGoals[currentIndex].learningGoal,
+          });
+        }
       }
     }
   };
 
   const handleKeyDown = event => {
-    if (event.key === 'ArrowLeft') {
+    if (event.key === 'ArrowLeft' && !productTour) {
       onCarouselPress(-1);
-    } else if (event.key === 'ArrowRight') {
+    } else if (event.key === 'ArrowRight' && !productTour) {
       onCarouselPress(1);
     }
   };
@@ -623,7 +679,10 @@ export default function LearningGoals({
                   !!studentLevelInfo &&
                   !!aiEvalInfo &&
                   aiEvalInfo.understanding !== undefined && (
-                    <div className={style.aiAssessmentOuterBlock}>
+                    <div
+                      id="tour-ai-assessment"
+                      className={style.aiAssessmentOuterBlock}
+                    >
                       <AiAssessment
                         isAiAssessed={
                           learningGoals[currentLearningGoal].aiEnabled
@@ -674,6 +733,7 @@ export default function LearningGoals({
 }
 
 LearningGoals.propTypes = {
+  productTour: PropTypes.bool,
   open: PropTypes.bool,
   teacherHasEnabledAi: PropTypes.bool,
   canProvideFeedback: PropTypes.bool,
