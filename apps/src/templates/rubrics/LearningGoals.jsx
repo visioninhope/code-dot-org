@@ -332,7 +332,7 @@ export default function LearningGoals({
   };
 
   const aiEvalInfo = useMemo(() => {
-    if (!!aiEvaluations) {
+    if (!!aiEvaluations && currentLearningGoal < learningGoals.length) {
       const aiInfo = aiEvaluations.find(
         item => item.learning_goal_id === learningGoals[currentLearningGoal].id
       );
@@ -555,6 +555,7 @@ export default function LearningGoals({
             ...(reportingData || {}),
             learningGoalKey: learningGoals[currentIndex].key,
             learningGoal: learningGoals[currentIndex].learningGoal,
+            studentId: !!studentLevelInfo ? studentLevelInfo.user_id : '',
           });
         }
       }
