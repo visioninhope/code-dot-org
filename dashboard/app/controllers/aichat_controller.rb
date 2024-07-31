@@ -63,6 +63,17 @@ class AichatController < ApplicationController
     render(status: :ok, json: response_body)
   end
 
+  # params are studentUserId: number, currentLevelId: number, scriptId: number
+  # POST /aichat/log_chat_event
+  def student_chat_history
+    # TODO: check that teacher is authorized to view this student's chat history, i.e.,
+    # the student is in the teacher user's section.
+
+    # For now, request all chat events for the student, level, and script.
+    chat_events = AichatEvent.where(user_id: params[:studentUserId], level_id: params[:currentLevelId], script_id: params[:scriptId])
+    render json: chat_events
+  end
+
   private def get_response_body
     # Check for profanity
     locale = params[:locale] || "en"
