@@ -210,15 +210,11 @@ class LtiV1Controller < ApplicationController
           render 'lti/v1/account_linking/landing', locals: {email: email_address} and return
         end
 
-        if DCDO.get('student-email-post-enabled', false)
-          @form_data = {
-            email: email_address
-          }
+        @form_data = {
+          email: email_address
+        }
 
-          render 'omniauth/redirect', {layout: false}
-        else
-          redirect_to new_user_registration_url
-        end
+        render 'omniauth/redirect', {layout: false}
       end
     else
       jwt_error_message = jwt_verifier.errors.empty? ? 'Invalid JWT' : jwt_verifier.errors.join(', ')
